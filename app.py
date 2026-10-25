@@ -1,8 +1,12 @@
-import os, secrets, sqlite3, hashlib, hmac, math
+import os, secrets, sqlite3, hashlib, hmac, math, smtplib, logging
+from email.message import EmailMessage
 from datetime import date, datetime, timedelta
 from functools import wraps
 from pathlib import Path
 from flask import Flask, request, redirect, url_for, render_template_string, flash, session, g, abort
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("pilo")
 
 BASE_DIR = Path(__file__).resolve().parent
 # On Render, set DB_PATH to a path on a persistent disk (for example /var/data/pilo.db).
@@ -69,6 +73,15 @@ def init_db():
       transaction_date TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'expense', notes TEXT DEFAULT '',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS password_resets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      used_at TEXT DEFAULT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id);
     CREATE INDEX IF NOT EXISTS idx_budgets_user ON budgets(user_id);
     CREATE INDEX IF NOT EXISTS idx_expenses_budget ON expenses(budget_id, user_id);
     CREATE INDEX IF NOT EXISTS idx_transactions_budget ON transactions(budget_id, user_id);
@@ -208,7 +221,11 @@ def page(title, template, **context):
 HOME = '''<section class="hero"><div><div class="eyebrow">Le budget étudiant, sans prise de tête</div><h1>Ton argent.<br>Ton rythme.<br><span style="color:var(--lime)">Tes choix.</span></h1><p>Pilo t’aide à comprendre où va ton argent, à prévoir tes dépenses et à avancer vers tes objectifs, sans décider à ta place.</p><div class="actions"><a class="btn light" href="{{ url_for('register') }}">Créer mon espace gratuit →</a><a class="btn secondary" href="{{ url_for('login') }}">J’ai déjà un compte</a></div><p class="smalltext">FCFA · Budget personnalisable · Suivi des dépenses réelles</p></div><div class="hero-card"><div class="eyebrow">Un budget plus lisible</div><p>Disponible</p><strong>25 000 FCFA</strong><div class="bar"><span style="width:68%"></span></div><div class="split"><span class="sub">Dépenses prévues</span><b>68 %</b></div><hr style="border:0;border-top:1px solid #315447;margin:18px 0"><div class="split"><span>🎯 Épargne</span><b>Objectif personnel</b></div><div class="split" style="margin-top:12px"><span>🔔 Alertes</span><b>Avant le dépassement</b></div><p class="sub">Exemple illustratif, pas une promesse de résultat.</p></div></section><div class="grid"><article class="card span-4"><div class="eyebrow">01 · Comprendre</div><h3>Vois ton budget d’un coup d’œil</h3><p class="muted">Revenus, dépenses prévues, dépenses réelles et argent restant, séparés clairement.</p></article><article class="card span-4"><div class="eyebrow">02 · Décider</div><h3>Garde la main</h3><p class="muted">Modifie tes catégories, tes priorités, tes prix et tes objectifs à tout moment.</p></article><article class="card span-4"><div class="eyebrow">03 · Progresser</div><h3>Épargne à ton rythme</h3><p class="muted">Teste plusieurs scénarios sans couper automatiquement les dépenses essentielles.</p></article></div>'''
 
 REGISTER = '''<section class="auth"><div class="card"><div class="eyebrow">Ton espace personnel</div><h1>Créer mon compte</h1><p class="muted">Tes données budgétaires seront rattachées à ton compte.</p><form method="post" class="form-grid"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><div class="field full"><label>Nom et prénom *</label><input name="full_name" required maxlength="100" autocomplete="name" value="{{ request.form.get('full_name','') }}"></div><div class="field full"><label>Adresse e-mail *</label><input name="email" type="email" required maxlength="254" autocomplete="email" value="{{ request.form.get('email','') }}"></div><div class="field"><label>Établissement (facultatif)</label><input name="institution" maxlength="120"></div><div class="field"><label>Filière (facultatif)</label><input name="field_of_study" maxlength="120"></div><div class="field"><label>Mot de passe *</label><input type="password" name="password" minlength="10" required autocomplete="new-password"><span class="hint">Au moins 10 caractères.</span></div><div class="field"><label>Confirmer le mot de passe *</label><input type="password" name="confirm_password" minlength="10" required autocomplete="new-password"></div><div class="field full"><button class="btn" type="submit">Créer mon espace →</button></div></form><p class="muted">Déjà inscrit ? <a href="{{ url_for('login') }}"><b>Se connecter</b></a></p></div></section>'''
-LOGIN = '''<section class="auth"><div class="card"><div class="eyebrow">Content de te revoir</div><h1>Connexion</h1><p class="muted">Connecte-toi pour retrouver ton budget.</p><form method="post" class="form-grid"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><div class="field full"><label>Adresse e-mail</label><input name="email" type="email" required autocomplete="email" value="{{ request.form.get('email','') }}"></div><div class="field full"><label>Mot de passe</label><input name="password" type="password" required autocomplete="current-password"></div><div class="field full"><button class="btn" type="submit">Me connecter →</button></div></form><p class="muted">Pas encore de compte ? <a href="{{ url_for('register') }}"><b>Créer un compte</b></a></p><p class="hint">Mot de passe oublié ? Pour cette première version, la récupération automatique par e-mail n'est pas activée. Contacte l'administrateur du service plutôt que de créer un autre compte.</p></div></section>'''
+LOGIN = '''<section class="auth"><div class="card"><div class="eyebrow">Content de te revoir</div><h1>Connexion</h1><p class="muted">Connecte-toi pour retrouver ton budget.</p><form method="post" class="form-grid"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><div class="field full"><label>Adresse e-mail</label><input name="email" type="email" required autocomplete="email" value="{{ request.form.get('email','') }}"></div><div class="field full"><label>Mot de passe</label><input name="password" type="password" required autocomplete="current-password"></div><div class="field full"><button class="btn" type="submit">Me connecter →</button></div></form><p class="muted">Pas encore de compte ? <a href="{{ url_for('register') }}"><b>Créer un compte</b></a></p><p class="hint"><a href="{{ url_for('forgot_password') }}"><b>Mot de passe oublié ?</b></a></p></div></section>'''
+
+FORGOT_PASSWORD = '''<section class="auth"><div class="card"><div class="eyebrow">Récupération du compte</div><h1>Mot de passe oublié ?</h1><p class="muted">Saisis l’adresse e-mail associée à ton compte. Si elle correspond à un compte, tu recevras un lien de réinitialisation.</p><form method="post" class="form-grid"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><div class="field full"><label>Adresse e-mail</label><input name="email" type="email" required maxlength="254" autocomplete="email" value="{{ request.form.get('email','') }}"></div><div class="field full"><button class="btn" type="submit">Envoyer le lien</button><a class="btn secondary" href="{{ url_for('login') }}">Retour à la connexion</a></div></form></div></section>'''
+
+RESET_PASSWORD = '''<section class="auth"><div class="card"><div class="eyebrow">Sécurité du compte</div><h1>Choisir un nouveau mot de passe</h1><p class="muted">Le nouveau mot de passe doit contenir au moins 10 caractères.</p><form method="post" class="form-grid"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><div class="field full"><label>Nouveau mot de passe</label><input name="password" type="password" required minlength="10" autocomplete="new-password"></div><div class="field full"><label>Confirmer le nouveau mot de passe</label><input name="confirm_password" type="password" required minlength="10" autocomplete="new-password"></div><div class="field full"><button class="btn" type="submit">Réinitialiser le mot de passe</button></div></form></div></section>'''
 
 DASHBOARD = '''{% if not budget %}<section class="card"><h1>Bienvenue sur Pilo, {{ current_user['full_name'].split(' ')[0] }} !</h1><p>Configure ton premier budget pour commencer.</p><a class="btn" href="{{ url_for('budget_settings') }}">Configurer mon budget →</a></section>{% else %}<div class="section-head"><div><div class="eyebrow">Ton espace personnel</div><h1>Bonjour {{ current_user['full_name'].split(' ')[0] }} 👋</h1><p class="muted">{{ budget['title'] }} · {{ budget['start_date'] }} au {{ budget['end_date'] }}</p></div><div class="actions"><a class="btn secondary" href="{{ url_for('budget_settings') }}">Modifier le budget</a><a class="btn" href="{{ url_for('expense_add') }}">+ Dépense prévue</a></div></div><div class="grid"><article class="card span-3"><div class="metric-label">Argent prévu disponible</div><div class="metric">{{ s.remaining_forecast|fcfa }} <small>FCFA</small></div><span class="pill {{ s.status }}">Prévision</span></article><article class="card span-3"><div class="metric-label">Solde réel estimé</div><div class="metric">{{ s.real_balance|fcfa }} <small>FCFA</small></div><span class="sub">Après dépenses enregistrées</span></article><article class="card span-3"><div class="metric-label">Dépenses prévues</div><div class="metric">{{ s.planned|fcfa }} <small>FCFA</small></div><span class="sub">Hors épargne et réserve</span></article><article class="card span-3"><div class="metric-label">Dépenses réelles</div><div class="metric">{{ s.actual_out|fcfa }} <small>FCFA</small></div><span class="sub">{{ s.actual_in|fcfa }} FCFA de revenus ajoutés</span></article><article class="card span-8"><div class="split"><div><h2>État de ton budget</h2><p class="muted">{{ s.status_text }}</p></div><span class="pill {{ s.status }}">{% if s.status=='green' %}Marge correcte{% elif s.status=='orange' %}Attention{% else %}Déficit{% endif %}</span></div><div class="grid"><div class="span-6"><div class="metric-label">Revenus et argent initial</div><div class="metric">{{ s.income|fcfa }} FCFA</div></div><div class="span-6"><div class="metric-label">Réserve d’urgence prévue</div><div class="metric">{{ budget['emergency_reserve']|fcfa }} FCFA</div></div></div><div class="bar"><span style="width:{{ [100, (s.planned+s.planned_savings+budget['emergency_reserve'])*100/s.income if s.income else 0]|min }}%"></span></div><p class="hint">Repère d’alerte : une marge inférieure au plus élevé de 3 000 FCFA ou 5 % du montant disponible est signalée comme faible. Ce seuil est indicatif et doit être adapté à ta situation.</p><div class="actions"><a class="btn" href="{{ url_for('transaction_add') }}">+ Enregistrer une dépense réelle</a><a class="btn secondary" href="{{ url_for('expense_add') }}">Ajouter une prévision</a></div></article><article class="card span-4"><h3>🎯 Mon objectif d’épargne</h3>{% if budget['savings_target'] %}<div class="metric">{{ budget['savings_current']|fcfa }} <small>FCFA</small></div><p class="muted">sur {{ budget['savings_target']|fcfa }} FCFA</p><div class="bar"><span style="width:{{ s.goal_pct }}%"></span></div><b>{{ s.goal_pct }} % atteint</b>{% if budget['savings_deadline'] %}<p class="hint">Échéance : {{ budget['savings_deadline'] }}</p>{% endif %}{% else %}<p class="muted">Tu n’as pas encore défini d’objectif. Choisis un montant réaliste selon tes dépenses essentielles.</p>{% endif %}<a class="btn secondary" href="{{ url_for('budget_settings') }}">Gérer mon objectif</a></article></div><div class="section-head"><div><h2>Répartition par catégorie</h2><p class="muted">Prévisions comparées aux dépenses enregistrées.</p></div></div><div class="grid"><article class="card span-6">{% if s.categories %}{% for cat,amount in s.categories.items() %}<div class="split"><span>{{ cat }}</span><b>{{ amount|fcfa }} FCFA</b></div><div class="bar"><span style="width:{{ [100, amount*100/(s.income or 1)]|min }}%"></span></div><div class="sub">Dépenses réelles : {{ s.actual_by_cat.get(cat,0)|fcfa }} FCFA</div>{% endfor %}{% else %}<div class="empty">Ajoute tes dépenses prévues pour voir la répartition.</div>{% endif %}</article><article class="card span-6"><h3>📆 Repères pratiques</h3><div class="split"><span>Plafond hebdomadaire indicatif</span><b>{{ s.weekly_cap|fcfa }} FCFA</b></div><p class="hint">Calculé à partir du solde prévisionnel et des jours restants. Ce n’est pas une limite imposée.</p><hr style="border:0;border-top:1px solid var(--line);margin:16px 0"><div class="split"><span>Épargne prévue dans ce budget</span><b>{{ s.planned_savings|fcfa }} FCFA</b></div><div class="split"><span>Réserve d’urgence</span><b>{{ budget['emergency_reserve']|fcfa }} FCFA</b></div><div class="split"><span>Montant essentiel identifié</span><b>{{ s.essential|fcfa }} FCFA</b></div><div class="split"><span>Dépenses facultatives</span><b>{{ s.discretionary|fcfa }} FCFA</b></div></article></div><div class="section-head"><div><h2>Mes dépenses prévues</h2><p class="muted">Modifie-les librement selon tes besoins.</p></div><a class="btn small" href="{{ url_for('expense_add') }}">+ Ajouter</a></div><div class="card table-wrap">{% if s.expenses %}<table><thead><tr><th>Libellé</th><th>Catégorie</th><th>Quantité × prix</th><th>Fréquence</th><th>Montant estimé</th><th>Actions</th></tr></thead><tbody>{% for e in s.expenses %}<tr><td><b>{{ e['label'] }}</b>{% if e['is_saving'] %}<div class="sub">Épargne</div>{% endif %}</td><td>{{ e['category'] }}</td><td>{{ e['quantity'] }} × {{ e['unit_price']|fcfa }}</td><td>{{ frequencies.get(e['frequency'],e['frequency']) }}</td><td><b>{{ (e['quantity']*e['unit_price'])|fcfa }} FCFA</b></td><td><a class="btn small secondary" href="{{ url_for('expense_add', expense_id=e['id']) }}">Modifier</a> <form class="inline-form" method="post" action="{{ url_for('expense_delete',expense_id=e['id']) }}" onsubmit="return confirm('Supprimer cette prévision ?')"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button class="btn small danger">Supprimer</button></form></td></tr>{% endfor %}</tbody></table>{% else %}<div class="empty">Aucune dépense prévue. Commence par ajouter le loyer, l’alimentation, le transport ou les dépenses d’études qui te concernent.</div>{% endif %}</div><div class="section-head"><div><h2>Derniers mouvements réels</h2><p class="muted">Enregistre ce qui est réellement dépensé ou reçu.</p></div><a class="btn small" href="{{ url_for('transaction_add') }}">+ Mouvement</a></div><div class="card table-wrap">{% if s.transactions %}<table><thead><tr><th>Date</th><th>Libellé</th><th>Catégorie</th><th>Type</th><th>Montant</th><th>Action</th></tr></thead><tbody>{% for t in s.transactions[:10] %}<tr><td>{{ t['transaction_date'] }}</td><td>{{ t['label'] }}</td><td>{{ t['category'] }}</td><td><span class="pill {{ 'green' if t['kind']=='income' else 'orange' }}">{{ 'Entrée' if t['kind']=='income' else 'Dépense' }}</span></td><td>{{ t['amount']|fcfa }} FCFA</td><td><form method="post" action="{{ url_for('transaction_delete',transaction_id=t['id']) }}" onsubmit="return confirm('Supprimer ce mouvement ?')"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button class="btn small danger">Supprimer</button></form></td></tr>{% endfor %}</tbody></table>{% else %}<div class="empty">Pas encore de mouvement réel enregistré.</div>{% endif %}</div>{% endif %}'''
 
@@ -219,6 +236,55 @@ EXPENSE_FORM = '''<div class="auth" style="max-width:760px"><div class="card"><d
 TRANSACTION_FORM = '''<div class="auth" style="max-width:720px"><div class="card"><div class="eyebrow">Suivi réel</div><h1>Enregistrer un mouvement</h1><p class="muted">Note les dépenses effectivement faites ou l’argent réellement reçu. Cela mettra à jour ton solde réel estimé.</p><form method="post" class="form-grid"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><div class="field full"><label>Libellé *</label><input name="label" required maxlength="120" placeholder="Ex. : achat de cahiers"></div><div class="field"><label>Type</label><select name="kind"><option value="expense">Dépense</option><option value="income">Argent reçu</option></select></div><div class="field"><label>Montant (FCFA) *</label><input name="amount" type="number" min="1" required></div><div class="field"><label>Catégorie</label><select name="category">{% for c in categories %}<option>{{ c }}</option>{% endfor %}</select></div><div class="field"><label>Date</label><input name="transaction_date" type="date" value="{{ today }}" required></div><div class="field full"><label>Note (facultatif)</label><input name="notes" maxlength="250" placeholder="Détail utile"></div><div class="field full"><button class="btn">Enregistrer le mouvement</button><a class="btn secondary" href="{{ url_for('dashboard') }}">Annuler</a></div></form></div></div>'''
 
 PROFILE_FORM = '''<div class="auth"><div class="card"><h1>Mon profil</h1><form method="post" class="form-grid"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><div class="field full"><label>Nom et prénom</label><input name="full_name" required maxlength="100" value="{{ current_user['full_name'] }}"></div><div class="field full"><label>Établissement</label><input name="institution" maxlength="120" value="{{ current_user['institution'] }}"></div><div class="field full"><label>Filière</label><input name="field_of_study" maxlength="120" value="{{ current_user['field_of_study'] }}"></div><div class="field full"><label>Mot de passe actuel (obligatoire pour le changer)</label><input type="password" name="old_password" autocomplete="current-password"></div><div class="field"><label>Nouveau mot de passe</label><input type="password" name="new_password" minlength="10" autocomplete="new-password"></div><div class="field"><label>Confirmer le nouveau mot de passe</label><input type="password" name="confirm_password" minlength="10" autocomplete="new-password"></div><div class="field full"><button class="btn">Enregistrer les modifications</button></div></form></div></div>'''
+
+# ---------- Password reset helpers ----------
+def password_reset_email_configured():
+    required = ('MAIL_SERVER', 'MAIL_USERNAME', 'MAIL_PASSWORD', 'MAIL_FROM')
+    return all(os.environ.get(key, '').strip() for key in required)
+
+def send_password_reset_email(recipient, reset_url):
+    """Send reset email through SMTP; never log the token or reset URL."""
+    if not password_reset_email_configured():
+        logger.warning('Password reset email is not configured: required SMTP environment variables are missing.')
+        return False
+    host = os.environ['MAIL_SERVER'].strip()
+    port = int(os.environ.get('MAIL_PORT', '587'))
+    username = os.environ['MAIL_USERNAME'].strip()
+    password = os.environ['MAIL_PASSWORD']
+    sender = os.environ['MAIL_FROM'].strip()
+    use_tls = os.environ.get('MAIL_USE_TLS', '1').strip().lower() not in ('0', 'false', 'no', 'off')
+    msg = EmailMessage()
+    msg['Subject'] = 'Réinitialisation du mot de passe — Pilo Étudiant'
+    msg['From'] = sender
+    msg['To'] = recipient
+    msg.set_content(
+        'Bonjour,\n\nUne demande de réinitialisation du mot de passe de ton compte Pilo Étudiant a été effectuée.\n\n'
+        f'Utilise ce lien dans les 30 minutes : {reset_url}\n\n'
+        'Si tu n’as pas demandé cette réinitialisation, ignore ce message.\n\nPilo Étudiant'
+    )
+    try:
+        with smtplib.SMTP(host, port, timeout=15) as server:
+            server.ehlo()
+            if use_tls:
+                server.starttls()
+                server.ehlo()
+            server.login(username, password)
+            server.send_message(msg)
+        return True
+    except Exception:
+        logger.exception('Unable to send password reset email via configured SMTP server.')
+        return False
+
+def get_valid_reset(token):
+    if not token or len(token) > 256:
+        return None
+    token_hash = hashlib.sha256(token.encode('utf-8')).hexdigest()
+    now = datetime.utcnow().isoformat(timespec='seconds')
+    return db_conn().execute(
+        'SELECT pr.id AS reset_id, pr.user_id, pr.expires_at, pr.used_at '
+        'FROM password_resets pr WHERE pr.token_hash=? AND pr.used_at IS NULL AND pr.expires_at>? LIMIT 1',
+        (token_hash, now)
+    ).fetchone()
 
 # ---------- Routes ----------
 @app.route('/')
@@ -264,6 +330,62 @@ def login():
             return redirect(url_for('dashboard'))
         flash('Adresse e-mail ou mot de passe incorrect.', 'error')
     return page('Connexion', LOGIN)
+
+@app.route('/mot-de-passe-oublie', methods=['GET', 'POST'])
+def forgot_password():
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip().lower()[:254]
+        # Always show the same response so visitors cannot discover registered addresses.
+        generic_message = 'Si cette adresse est associée à un compte et que le service e-mail est configuré, un lien sera envoyé. Vérifie aussi tes courriers indésirables.'
+        user = None
+        if email and '@' in email:
+            user = db_conn().execute('SELECT id, email FROM users WHERE email=?', (email,)).fetchone()
+        if user:
+            now = datetime.utcnow()
+            expires = (now + timedelta(minutes=30)).isoformat(timespec='seconds')
+            raw_token = secrets.token_urlsafe(32)
+            token_hash = hashlib.sha256(raw_token.encode('utf-8')).hexdigest()
+            conn = db_conn()
+            # Invalidate older outstanding links for this user before creating a new one.
+            conn.execute('UPDATE password_resets SET used_at=? WHERE user_id=? AND used_at IS NULL', (now.isoformat(timespec='seconds'), user['id']))
+            conn.execute('INSERT INTO password_resets(user_id, token_hash, expires_at) VALUES(?,?,?)', (user['id'], token_hash, expires))
+            conn.commit()
+            base_url = os.environ.get('APP_BASE_URL', '').strip().rstrip('/')
+            if not base_url:
+                base_url = request.url_root.rstrip('/')
+            reset_url = base_url + url_for('reset_password', token=raw_token)
+            send_password_reset_email(user['email'], reset_url)
+        flash(generic_message, 'info')
+        return redirect(url_for('forgot_password'))
+    return page('Mot de passe oublié', FORGOT_PASSWORD)
+
+@app.route('/reinitialiser-mot-de-passe/<token>', methods=['GET', 'POST'])
+def reset_password(token):
+    reset = get_valid_reset(token)
+    if not reset:
+        return page('Lien invalide', '<section class="card"><h1>Lien invalide ou expiré</h1><p class="muted">Ce lien a déjà été utilisé ou n’est plus valable. Tu peux demander un nouveau lien.</p><a class="btn" href="{{ url_for("forgot_password") }}">Demander un nouveau lien</a></section>'), 400
+    if request.method == 'POST':
+        password = request.form.get('password', '')
+        confirm = request.form.get('confirm_password', '')
+        if len(password) < 10:
+            flash('Le mot de passe doit contenir au moins 10 caractères.', 'error')
+        elif password != confirm:
+            flash('Les deux mots de passe ne correspondent pas.', 'error')
+        else:
+            conn = db_conn()
+            now = datetime.utcnow().isoformat(timespec='seconds')
+            # Recheck validity inside the update path to reduce race/replay risk.
+            current = conn.execute('SELECT id FROM password_resets WHERE id=? AND used_at IS NULL AND expires_at>? ', (reset['reset_id'], now)).fetchone()
+            if not current:
+                flash('Ce lien n’est plus valable. Demande-en un nouveau.', 'error')
+                return redirect(url_for('forgot_password'))
+            conn.execute('UPDATE users SET password_hash=? WHERE id=?', (hash_password(password), reset['user_id']))
+            conn.execute('UPDATE password_resets SET used_at=? WHERE user_id=? AND used_at IS NULL', (now, reset['user_id']))
+            conn.commit()
+            session.clear()
+            flash('Mot de passe modifié. Connecte-toi avec ton nouveau mot de passe.', 'success')
+            return redirect(url_for('login'))
+    return page('Nouveau mot de passe', RESET_PASSWORD)
 
 @app.route('/deconnexion', methods=['POST'])
 @login_required
