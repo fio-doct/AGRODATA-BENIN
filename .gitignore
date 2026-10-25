@@ -1,0 +1,6 @@
+agrodata.db
+**pycache**/
+*.pyc
+.venv/
+venv/
+.env
