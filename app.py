@@ -1,3 +1,97 @@
+Oui, mais attention : ne modifie pas directement les fichiers de ton site actuel sans sauvegarde. Nous allons préparer Pilo Étudiant sur GitHub, puis le déployer sur Render.
+
+Étape 1 — Ouvre ton dépôt GitHub
+
+Clique ici :
+
+Ton dépôt AGRODATA-BENIN sur GitHub
+
+Tu arriveras sur la page qui contient les fichiers de ton application.
+
+Étape 2 — Prépare une sauvegarde
+
+Avant de remplacer quoi que ce soit :
+
+Sur GitHub, ouvre le fichier app.py.
+Vérifie que tu es bien sur la branche main.
+Télécharge une copie de l'ancien fichier pour pouvoir le récupérer si nécessaire.
+
+Tu peux aussi conserver une copie complète du dépôt sur ton ordinateur.
+
+Étape 3 — Remplacer les fichiers
+
+J'ai préparé les fichiers de la nouvelle application :
+
+Télécharger le projet complet Pilo Étudiant
+Code Python app.py
+Dépendances requirements.txt
+Guide du projet
+
+Cependant, ne remplace pas encore le fichier de production : la nouvelle version doit être testée avant sa publication.
+
+Étape 4 — Dis-moi ce que tu vois
+
+Une fois sur GitHub, regarde les boutons situés au-dessus de la liste des fichiers.
+
+Est-ce que tu vois un bouton vert Code, un bouton Add file et le fichier app.py ?
+
+Réponds simplement oui ou envoie une capture d'écran de la page.
+
+Je te guiderai à partir de ton écran pour mettre les fichiers en place sans casser ton site actuel.
+
+app.py
+Code
+requirements.txt
+Document
+README_PILO.md
+Document
+
+AGRODATA-BENIN
+
+Public
+
+fio-doct (image)fio-doct
+
+Update print statement from 'Hello' to 'Goodbye'
+
+f148457 · 8 hours ago
+
+Name		
+.gitignore	Add .gitignore for Python project files	10 hours ago
+README.md	Initial commit	10 hours ago
+app.py	Update print statement from 'Hello' to 'Goodbye'	8 hours ago
+requirements.txt	Add files via upload	9 hours ago CES MON GITHUB SA
+
+D’accord, c’est bien ton dépôt GitHub. Je vois les fichiers app.py, requirements.txt, README.md et .gitignore.
+
+Attention : il y a un détail important. Le dernier commit s’intitule « Update print statement from 'Hello' to 'Goodbye' ». Cela ne correspond pas au projet agricole que nous avions examiné auparavant. Il faut donc vérifier le contenu actuel de app.py avant de remplacer quoi que ce soit.
+
+Voici ce que nous allons faire
+
+1. Sauvegarder le projet actuel.
+
+Ne supprime aucun fichier pour le moment.
+
+2. Télécharger le nouveau code Pilo Étudiant.
+
+📦 Télécharger Pilo Étudiant — fichiers du projet
+
+3. Vérifier le code avant de le publier.
+
+Le code préparé précédemment n'a pas encore passé de tests fonctionnels complets. Je ne veux donc pas te faire remplacer ton application par une version qui pourrait échouer au démarrage.
+
+Maintenant, fais ceci
+
+Sur ta page GitHub :
+
+Clique sur le fichier app.py.
+Copie le code affiché, ou télécharge le fichier.
+Envoie-moi le fichier app.py actuel ici.
+
+Je pourrai alors comparer précisément le projet actuel avec la version Pilo, corriger le nouveau code et vérifier les points essentiels avant de te donner une version prête à déployer.
+
+Nous éviterons ainsi de perdre ton travail ou de publier un site défectueux.
+
 from flask import Flask, request, redirect, url_for, render_template_string, flash
 import sqlite3
 from pathlib import Path
@@ -607,3 +701,193 @@ if __name__ == "__main__":
     # Accessible sur ce PC uniquement pour le moment.
     # Ne pas publier directement ce serveur de développement sur Internet.
     app.run(host="127.0.0.1", port=5000, debug=False)
+
+Parfait. J’ai maintenant le contenu de ton véritable app.py. Je peux donc comparer le projet actuel avec celui que nous voulons construire, au lieu de travailler sur des suppositions.
+
+1. Ce que révèle ton code actuel
+
+Ton application AGRODATA-BENIN possède déjà une base intéressante :
+
+Python et Flask pour le fonctionnement du site ;
+SQLite pour stocker les données ;
+une interface responsive ;
+des tableaux de bord, des formulaires et plusieurs modules de gestion.
+
+Cependant, il manque les éléments fondamentaux de Pilo Étudiant :
+
+Élément	Code actuel
+Inscription des étudiants	Absente
+Connexion individuelle	Absente
+Protection des comptes	Absente
+Budget personnel	Absent
+Gestion des dépenses étudiantes	Absente
+Objectifs d'épargne	Absents
+Suivi des dépenses réelles	Absent
+Séparation des données par étudiant	Absente
+
+Le principal problème est que les données agricoles sont actuellement partagées dans les mêmes tables, sans compte utilisateur. Nous devons donc transformer l'application, et non simplement changer son nom.
+
+2. J'ai préparé une nouvelle version
+
+J'ai déjà produit un premier code Pilo Étudiant qui comprend notamment :
+
+la création d'un compte et la connexion ;
+des mots de passe hachés ;
+un espace personnel pour chaque étudiant ;
+les budgets et les dépenses prévisionnelles ;
+les dépenses réellement effectuées et les entrées d'argent ;
+les objectifs d'épargne et les réserves d'urgence ;
+le calcul des soldes et les alertes ;
+la modification du profil et du mot de passe.
+Téléchargements
+
+Projet complet :
+
+📦 Télécharger Pilo Étudiant — archive ZIP
+
+Fichiers individuels :
+
+Code principal app.py
+Dépendances requirements.txt
+Guide d'installation README_PILO.md
+
+Le code a passé une vérification de syntaxe Python. En revanche, les tests fonctionnels complets n'ont pas encore été exécutés : je ne peux donc pas garantir que toutes les fonctionnalités fonctionnent sans défaut.
+
+3. Ce que je te recommande maintenant
+
+Ne modifie pas encore le fichier app.py de ton dépôt public.
+
+La prochaine étape est de vérifier et de tester le nouveau code, puis de préparer son déploiement sur Render. Il faudra notamment configurer une clé secrète et un stockage persistant pour éviter que les comptes et les budgets disparaissent lors d'un redéploiement.
+
+Notre objectif reste une application complète, fiable et utilisable par plusieurs étudiants. Nous devons valider le fonctionnement réel avant de publier la nouvelle version.
+
+app.py
+Code
+requirements.txt
+Document
+README_PILO.md
+Document
+
+app.py
+999
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+import os, secrets, sqlite3, hashlib, hmac, math
+from datetime import date, datetime, timedelta
+from functools import wraps
+from pathlib import Path
+from flask import Flask, request, redirect, url_for, render_template_string, flash, session, g, abort
+
+
+BASE_DIR = Path(__file__).resolve().parent
+# On Render, set DB_PATH to a path on a persistent disk (for example /var/data/pilo.db).
+DB_PATH = Path(os.environ.get('DB_PATH', str(BASE_DIR / 'pilo.db')))
+DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+app = Flask(__name__)
+app.config.update(
+    SECRET_KEY=os.environ.get('SECRET_KEY') or secrets.token_hex(32),
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SECURE=os.environ.get('COOKIE_SECURE', '0') == '1',
+    PERMANENT_SESSION_LIFETIME=timedelta(days=14),
+    MAX_CONTENT_LENGTH=1 * 1024 * 1024,
+)
+
+
+CATEGORIES = ['Alimentation', 'Logement', 'Transport / carburant', 'Téléphone / Internet', 'Études', 'Santé', 'Hygiène', 'Entretien moto / équipement', 'Loisirs', 'Autre']
+FREQUENCIES = {'once': 'Une seule fois', 'weekly': 'Chaque semaine', 'monthly': 'Chaque mois'}
+
+
+# ---------- Database ----------
+def db_conn():
+    if 'db' not in g:
+        g.db = sqlite3.connect(DB_PATH, timeout=15)
+        g.db.row_factory = sqlite3.Row
+        g.db.execute('PRAGMA foreign_keys = ON')
+        g.db.execute('PRAGMA journal_mode = WAL')
+    return g.db
+
+
+@app.teardown_appcontext
+def close_db(_error=None):
+    conn = g.pop('db', None)
+    if conn is not None:
+        conn.close()
+
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute('PRAGMA foreign_keys = ON')
+    conn.executescript('''
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, full_name TEXT NOT NULL,
+      email TEXT NOT NULL COLLATE NOCASE UNIQUE, institution TEXT DEFAULT '',
+      field_of_study TEXT DEFAULT '', password_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS budgets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL DEFAULT 'Mon budget', period_type TEXT NOT NULL DEFAULT 'monthly',
+      start_date TEXT NOT NULL, end_date TEXT NOT NULL, initial_amount INTEGER NOT NULL DEFAULT 0,
+      savings_target INTEGER NOT NULL DEFAULT 0, savings_current INTEGER NOT NULL DEFAULT 0,
+      savings_deadline TEXT DEFAULT '', emergency_reserve INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS expenses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, budget_id INTEGER NOT NULL REFERENCES budgets(id) ON DELETE CASCADE,
