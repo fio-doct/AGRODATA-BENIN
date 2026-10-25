@@ -1,12 +1,10 @@
-from flask import Flask, request, redirect, url_for, render_template_string, flash, session, abort, send_file
+from flask import Flask, request, redirect, url_for, render_template_string, flash
 import sqlite3
 from pathlib import Path
 from datetime import date
-import os, secrets, base64, binascii, io
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
-app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
+app.secret_key = "agrodata-benin-cle-locale"
 
 DOSSIER = Path(__file__).resolve().parent
 DB = DOSSIER / "agrodata.db"
@@ -84,17 +82,6 @@ def initialiser_db():
                 rendement REAL DEFAULT 0,
                 campagne TEXT DEFAULT '',
                 observations TEXT DEFAULT ''
-            )
-        """)
-
-        db.execute("""
-            CREATE TABLE IF NOT EXISTS verification_requests (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                token TEXT NOT NULL UNIQUE,
-                status TEXT NOT NULL DEFAULT 'pending',
-                image_blob BLOB,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                reviewed_at TEXT DEFAULT ''
             )
         """)
 
@@ -230,196 +217,6 @@ def page(titre, contenu, page_name):
 def compter(table):
     with connexion() as db:
         return db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-
-
-
-# ---------------- VERIFICATION PAR SELFIE ----------------
-
-@app.before_request
-def protection_application():
-    libres = {"verification", "verification_capture", "verification_status",
-              "admin_login", "admin_logout", "admin_verifications",
-              "admin_image", "admin_decision", "static"}
-    if request.endpoint in libres or request.endpoint is None:
-        return None
-    if session.get("admin_logged_in") or session.get("access_granted"):
-        return None
-    return redirect(url_for("verification"))
-
-
-@app.route("/verification", methods=["GET", "POST"])
-def verification():
-    if session.get("access_granted"):
-        return redirect(url_for("accueil"))
-    if request.method == "POST":
-        if request.form.get("consent") != "yes":
-            flash("Tu dois donner ton accord explicite pour continuer.", "error")
-            return redirect(url_for("verification"))
-        token = session.get("verification_token")
-        if token:
-            with connexion() as db:
-                row = db.execute("SELECT status FROM verification_requests WHERE token=?", (token,)).fetchone()
-            if row and row["status"] == "pending":
-                return redirect(url_for("verification_status"))
-            if row and row["status"] == "approved":
-                session["access_granted"] = True
-                return redirect(url_for("accueil"))
-        token = secrets.token_urlsafe(32)
-        with connexion() as db:
-            db.execute("INSERT INTO verification_requests (token,status) VALUES (?,'pending')", (token,))
-        session["verification_token"] = token
-        session["consent_given"] = True
-        return render_template_string(CAMERA_PAGE)
-    return render_template_string(CONSENT_PAGE)
-
-
-@app.route("/verification/capture", methods=["POST"])
-def verification_capture():
-    if not session.get("consent_given") or not session.get("verification_token"):
-        abort(403)
-    payload = request.get_json(silent=True) or {}
-    data = payload.get("image", "")
-    if not isinstance(data, str) or not data.startswith("data:image/jpeg;base64,"):
-        return {"ok": False, "message": "Format de photo invalide."}, 400
-    try:
-        raw = base64.b64decode(data.split(",", 1)[1], validate=True)
-    except (ValueError, binascii.Error):
-        return {"ok": False, "message": "Photo invalide."}, 400
-    if not raw or len(raw) > 1024 * 1024:
-        return {"ok": False, "message": "Photo trop volumineuse."}, 413
-    with connexion() as db:
-        row = db.execute("SELECT status FROM verification_requests WHERE token=?",
-                         (session["verification_token"],)).fetchone()
-        if not row or row["status"] != "pending":
-            return {"ok": False, "message": "Demande inactive."}, 409
-        db.execute("UPDATE verification_requests SET image_blob=? WHERE token=?",
-                   (sqlite3.Binary(raw), session["verification_token"]))
-    return {"ok": True}
-
-
-@app.route("/verification/status")
-def verification_status():
-    token = session.get("verification_token")
-    if not token:
-        return redirect(url_for("verification"))
-    with connexion() as db:
-        row = db.execute("SELECT status FROM verification_requests WHERE token=?", (token,)).fetchone()
-    if not row:
-        session.pop("verification_token", None)
-        session.pop("consent_given", None)
-        return redirect(url_for("verification"))
-    if row["status"] == "approved":
-        session["access_granted"] = True
-        session.pop("consent_given", None)
-        return redirect(url_for("accueil"))
-    if row["status"] == "rejected":
-        session.pop("verification_token", None)
-        session.pop("consent_given", None)
-        return render_template_string(REJECTED_PAGE)
-    return render_template_string(WAITING_PAGE)
-
-
-@app.route("/admin/login", methods=["GET", "POST"])
-def admin_login():
-    expected = os.environ.get("ADMIN_PASSWORD", "")
-    if not expected:
-        return render_template_string(ADMIN_SETUP_PAGE), 503
-    error = ""
-    if request.method == "POST":
-        if secrets.compare_digest(request.form.get("password", ""), expected):
-            session.clear()
-            session["admin_logged_in"] = True
-            return redirect(url_for("admin_verifications"))
-        error = "Mot de passe incorrect."
-    return render_template_string(ADMIN_LOGIN_PAGE, error=error)
-
-
-@app.route("/admin/logout", methods=["POST"])
-def admin_logout():
-    session.clear()
-    return redirect(url_for("admin_login"))
-
-
-@app.route("/admin/verifications")
-def admin_verifications():
-    if not session.get("admin_logged_in"):
-        return redirect(url_for("admin_login"))
-    with connexion() as db:
-        rows = db.execute("SELECT id,status,created_at FROM verification_requests ORDER BY id DESC LIMIT 100").fetchall()
-    lines = []
-    for r in rows:
-        if r["status"] == "pending":
-            photo = f'<a href="/admin/verifications/{r["id"]}/image">Voir la photo</a>'
-            action = f'<form method="post" action="/admin/verifications/{r["id"]}/decision"><button name="decision" value="approved">Valider</button> <button name="decision" value="rejected">Refuser</button></form>'
-        else:
-            photo, action = "Photo supprimée", "Traité"
-        lines.append(f'<tr><td>{r["id"]}</td><td>{r["created_at"]}</td><td>{r["status"]}</td><td>{photo}</td><td>{action}</td></tr>')
-    return render_template_string(ADMIN_LIST_PAGE, rows="".join(lines) or '<tr><td colspan="5">Aucune demande.</td></tr>')
-
-
-@app.route("/admin/verifications/<int:rid>/image")
-def admin_image(rid):
-    if not session.get("admin_logged_in"):
-        return redirect(url_for("admin_login"))
-    with connexion() as db:
-        row = db.execute("SELECT image_blob,status FROM verification_requests WHERE id=?", (rid,)).fetchone()
-    if not row or row["status"] != "pending" or not row["image_blob"]:
-        abort(404)
-    return send_file(io.BytesIO(row["image_blob"]), mimetype="image/jpeg", max_age=0)
-
-
-@app.route("/admin/verifications/<int:rid>/decision", methods=["POST"])
-def admin_decision(rid):
-    if not session.get("admin_logged_in"):
-        return redirect(url_for("admin_login"))
-    decision = request.form.get("decision")
-    if decision not in ("approved", "rejected"):
-        abort(400)
-    with connexion() as db:
-        row = db.execute("SELECT status FROM verification_requests WHERE id=?", (rid,)).fetchone()
-        if not row or row["status"] != "pending":
-            flash("Demande déjà traitée ou inexistante.", "error")
-            return redirect(url_for("admin_verifications"))
-        db.execute("UPDATE verification_requests SET status=?, image_blob=NULL, reviewed_at=CURRENT_TIMESTAMP WHERE id=?",
-                   (decision, rid))
-    flash("Demande traitée ; photo supprimée.")
-    return redirect(url_for("admin_verifications"))
-
-
-CONSENT_PAGE = """
-<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Vérification | AGRODATA BÉNIN</title><style>
-body{font-family:Arial;background:#f3f6f4;color:#24332b;padding:24px}.card{max-width:650px;margin:30px auto;background:white;padding:28px;border-radius:14px;line-height:1.6}
-button{background:#176b45;color:white;border:0;border-radius:7px;padding:12px;cursor:pointer}.notice{background:#edf7ef;padding:14px;border-radius:8px}
-</style><main class="card"><h1>🌱 AGRODATA BÉNIN</h1><h2>Vérification par selfie</h2>
-<div class="notice"><p>Après ton accord, la caméra s'ouvrira visiblement et un selfie sera pris automatiquement après un compte à rebours de 3 secondes. La photo sera envoyée à l'administrateur pour vérification et supprimée de la base dès sa décision.</p><p>Si tu refuses, aucune photo ne sera prise ni envoyée et tu ne pourras pas accéder aux modules protégés.</p></div>
-{% with messages = get_flashed_messages(with_categories=true) %}{% for c,m in messages %}<p>{{m}}</p>{% endfor %}{% endwith %}
-<form method="post"><label><input type="checkbox" name="consent" value="yes" required> J'ai lu cette information et j'accepte la prise et l'envoi de mon selfie pour cette vérification.</label><p><button>J'accepte et continuer</button></p></form>
-<a href="/admin/login">Connexion administrateur</a></main></html>
-"""
-
-CAMERA_PAGE = """
-<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Selfie | AGRODATA BÉNIN</title><style>body{font-family:Arial;background:#f3f6f4;padding:20px;text-align:center}.card{max-width:600px;margin:auto;background:white;padding:25px;border-radius:14px}video{width:100%;max-width:460px;background:#111;border-radius:10px}</style>
-<main class="card"><h1>Prise du selfie</h1><p>La caméra restera visible pendant la prise.</p><video id="v" autoplay playsinline muted></video><canvas id="c" hidden></canvas><p id="s">Demande d'autorisation de caméra…</p></main>
-<script>(async()=>{let stream;const v=document.getElementById('v'),c=document.getElementById('c'),s=document.getElementById('s');try{
-if(!navigator.mediaDevices?.getUserMedia)throw Error("Caméra indisponible dans ce navigateur");
-stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user"},audio:false});v.srcObject=stream;await new Promise(r=>v.onloadedmetadata=r);await v.play();
-for(let n=3;n>0;n--){s.textContent="Photo dans "+n+"…";await new Promise(r=>setTimeout(r,1000))}
-c.width=v.videoWidth;c.height=v.videoHeight;if(!c.width)throw Error("Aucune image reçue");
-c.getContext('2d').drawImage(v,0,0);const image=c.toDataURL('image/jpeg',.82);stream.getTracks().forEach(t=>t.stop());v.srcObject=null;s.textContent="Envoi de la photo…";
-const r=await fetch("/verification/capture",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image})});const d=await r.json();if(!r.ok||!d.ok)throw Error(d.message||"Envoi impossible");location.href="/verification/status";
-}catch(e){if(stream)stream.getTracks().forEach(t=>t.stop());s.textContent="Erreur : "+e.message+". Recharge la page pour recommencer."}})();</script></html>
-"""
-
-WAITING_PAGE = """
-<!doctype html><html lang="fr"><meta charset="utf-8"><title>Vérification en cours</title><body style="font-family:Arial;max-width:600px;margin:50px auto;padding:20px"><h1>Demande envoyée</h1><p>Ta demande est en attente. Cette page vérifiera automatiquement si l'administrateur a pris sa décision.</p></body>
-<script>setInterval(async()=>{try{let r=await fetch('/verification/status',{cache:'no-store'});if(r.redirected)location.href=r.url}catch(e){}},4000)</script></html>
-"""
-REJECTED_PAGE = """<!doctype html><html lang="fr"><meta charset="utf-8"><title>Demande refusée</title><body style="font-family:Arial;max-width:600px;margin:50px auto;padding:20px"><h1>Demande non validée</h1><p>La photo a été supprimée. Tu peux recommencer la procédure si nécessaire.</p><a href="/verification">Recommencer</a></body></html>"""
-ADMIN_SETUP_PAGE = """<!doctype html><html lang="fr"><meta charset="utf-8"><body style="font-family:Arial;max-width:700px;margin:50px auto"><h1>Configuration administrateur requise</h1><p>Dans Render, définis les variables d'environnement SECRET_KEY et ADMIN_PASSWORD, puis redéploie.</p></body></html>"""
-ADMIN_LOGIN_PAGE = """<!doctype html><html lang="fr"><meta charset="utf-8"><title>Connexion administrateur</title><body style="font-family:Arial;max-width:450px;margin:50px auto;padding:20px"><h1>Administrateur</h1>{% if error %}<p style="color:red">{{error}}</p>{% endif %}<form method="post"><label>Mot de passe</label><input type="password" name="password" required autocomplete="current-password"><button>Se connecter</button></form><a href="/verification">Retour</a></body></html>"""
-ADMIN_LIST_PAGE = """<!doctype html><html lang="fr"><meta charset="utf-8"><title>Vérifications</title><body style="font-family:Arial;margin:30px"><h1>AGRODATA BÉNIN — Demandes de vérification</h1><p>Les photos sont visibles uniquement tant que la demande est en attente et sont supprimées à la décision.</p><table border="1" cellpadding="10"><tr><th>N°</th><th>Date</th><th>Statut</th><th>Photo</th><th>Décision</th></tr>{{rows|safe}}</table><form method="post" action="/admin/logout"><button>Se déconnecter</button></form><script>setTimeout(()=>location.reload(),15000)</script></body></html>"""
 
 
 # ---------------- TABLEAU DE BORD ----------------
